@@ -54,34 +54,31 @@ The PersonalKey is stored by FHEM and is not part of the device definition.
 
 ## Installation
 
-Repository layout:
+Add the repository as a persistent FHEM update source:
+
+```text
+update add https://raw.githubusercontent.com/50watt/fhem-tedee/main/controls_tedee.txt
+update all
+shutdown restart
+```
+
+The Tedee modules are then included in future regular FHEM `update all` runs.
+
+For a one-time installation or update without registering the repository permanently:
+
+```text
+update all https://raw.githubusercontent.com/50watt/fhem-tedee/main/controls_tedee.txt
+shutdown restart
+```
+
+The FHEM update source installs only these module files:
 
 ```text
 FHEM/73_TedeeBridge.pm
 FHEM/74_TedeeDevice.pm
 lib/FHEM/Devices/Tedee/Bridge.pm
 lib/FHEM/Devices/Tedee/Device.pm
-README.md
-CHANGELOG.md
-LICENSE
 ```
-
-For a standard FHEM installation under `/opt/fhem`, copy only the four module files:
-
-```bash
-sudo cp FHEM/73_TedeeBridge.pm /opt/fhem/FHEM/
-sudo cp FHEM/74_TedeeDevice.pm /opt/fhem/FHEM/
-
-sudo mkdir -p /opt/fhem/lib/FHEM/Devices/Tedee
-sudo cp lib/FHEM/Devices/Tedee/Bridge.pm /opt/fhem/lib/FHEM/Devices/Tedee/
-sudo cp lib/FHEM/Devices/Tedee/Device.pm /opt/fhem/lib/FHEM/Devices/Tedee/
-
-sudo chown fhem:dialout   /opt/fhem/FHEM/73_TedeeBridge.pm   /opt/fhem/FHEM/74_TedeeDevice.pm   /opt/fhem/lib/FHEM/Devices/Tedee/Bridge.pm   /opt/fhem/lib/FHEM/Devices/Tedee/Device.pm
-
-sudo chmod 644   /opt/fhem/FHEM/73_TedeeBridge.pm   /opt/fhem/FHEM/74_TedeeDevice.pm   /opt/fhem/lib/FHEM/Devices/Tedee/Bridge.pm   /opt/fhem/lib/FHEM/Devices/Tedee/Device.pm
-```
-
-Restart FHEM after installation so the wrapper and `lib` modules are loaded consistently.
 
 ## Setup
 

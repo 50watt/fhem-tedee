@@ -1,0 +1,4 @@
+UPD 2026-08-23_13:57:52 22207 FHEM/73_TedeeBridge.pm
+UPD 2026-08-23_13:57:52 13528 FHEM/74_TedeeDevice.pm
+UPD 2026-08-23_13:57:52 43204 lib/FHEM/Devices/Tedee/Bridge.pm
+UPD 2026-08-23_13:57:52 22422 lib/FHEM/Devices/Tedee/Device.pm
