@@ -1,0 +1,8 @@
+2026-08-23 v0.7.29
+- Initial public release
+- Tedee Bridge local API support
+- TedeeDevice support
+- Automatic callback registration
+- Optional Tedee Cloud activity support
+- Rename-safe device discovery
+- FHEM update repository support
