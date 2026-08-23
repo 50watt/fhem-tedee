@@ -7,9 +7,9 @@ FHEM modules for controlling Tedee smart locks through the Tedee Bridge local AP
 - FHEM
 - Perl 5.14 or newer
 - A Tedee smart lock paired with a Tedee Bridge
-- A Tedee Bridge with the local Bridge API enabled
+- Local Bridge API enabled on the Tedee Bridge
 - Network connectivity from FHEM to the Tedee Bridge
-- The Tedee Bridge must have Internet access for Tedee's certificate handling
+- Internet access for the Tedee Bridge for Tedee's certificate handling
 
 No additional CPAN modules should normally be required on a standard FHEM installation.
 
@@ -18,8 +18,6 @@ The module uses Perl/FHEM components such as `Digest::SHA`, `Time::HiRes`, `Enco
 No MQTT broker or external daemon is required.
 
 ## Hardware support
-
-A Tedee Bridge is required. The local API is provided by the Bridge, not directly by the lock.
 
 This module has currently been tested with one Tedee lock installation. Multi-device support is implemented, but installations with multiple Tedee locks have not yet been validated by the author.
 
