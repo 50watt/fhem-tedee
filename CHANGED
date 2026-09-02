@@ -1,3 +1,13 @@
+2026-09-02 v0.7.30
+- Make unlock deterministic: always unlock without pulling the spring
+- Make unlatch unlock if necessary and pull the spring
+- Use native Tedee auto-pull for immediate unlock + spring pull when enabled
+- Use callback/status-driven two-step unlatch when Tedee auto-pull is disabled
+- Expose pullSpringEnabled and autoPullSpringEnabled as regular readings
+- Reject unlatch when spring pulling is known to be disabled
+- Document expected unlatch delay with auto-pull disabled
+- Document Tedee app setting synchronization behavior
+
 2026-08-23 v0.7.29
 - Initial public release
 - Tedee Bridge local API support
