@@ -85,7 +85,7 @@ eval {
     };
 };
 
-our $VERSION = '0.7.29';
+our $VERSION = '0.7.30';
 
 ######## Begin Device
 
@@ -700,6 +700,24 @@ sub WriteReadings {
 
     if ( defined( $data->{isConnected} ) ) {
         ::readingsBulkUpdate( $hash, 'isConnected', $data->{isConnected} );
+    }
+
+    # These settings directly affect command semantics and therefore belong
+    # to the normal operational readings, not only to debug output.
+    if ( defined( $data->{deviceSettings} )
+        && ref( $data->{deviceSettings} ) eq 'HASH' )
+    {
+        ::readingsBulkUpdate(
+            $hash,
+            'pullSpringEnabled',
+            $data->{deviceSettings}{pullSpringEnabled}
+        ) if defined( $data->{deviceSettings}{pullSpringEnabled} );
+
+        ::readingsBulkUpdate(
+            $hash,
+            'autoPullSpringEnabled',
+            $data->{deviceSettings}{autoPullSpringEnabled}
+        ) if defined( $data->{deviceSettings}{autoPullSpringEnabled} );
     }
 
     if ( ::AttrVal( $name, 'debugReadings', 0 ) ) {

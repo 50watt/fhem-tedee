@@ -37,7 +37,7 @@ BEGIN {
   GP_Import(qw(defs attr data));
 }
 
-our $VERSION = '0.7.29';
+our $VERSION = '0.7.30';
 
 my $API_VERSION  = 'v1.0';
 my $WEBHOOK_PATH = 'tedee';
@@ -332,14 +332,171 @@ sub Write {
   }
 
   if ($fn eq 'unlock') {
-    return Request($hash, 'POST', "lock/$deviceId/unlock", '{}', \&ParseCommandResponse, "POST lock/$deviceId/unlock");
+    # Mode 3 explicitly suppresses automatic spring pulling. This keeps the
+    # FHEM command "unlock" deterministic even when Tedee auto-pull is enabled.
+    return RequestUnlockMode($hash, $deviceId, 3);
   }
 
   if ($fn eq 'unlatch') {
-    return Request($hash, 'POST', "lock/$deviceId/pull", '{}', \&ParseCommandResponse, "POST lock/$deviceId/pull");
+    # "unlatch" is a high-level FHEM operation: unlock when necessary and
+    # finally pull the spring. The exact request sequence depends on the
+    # current state and on Tedee's auto-pull setting.
+    return StartUnlatch($hash, $deviceId);
   }
 
   return "Unknown write function $fn";
+}
+
+sub RequestUnlockMode {
+  my ($hash, $deviceId, $mode) = @_;
+
+  return Request(
+    $hash,
+    'POST',
+    "lock/$deviceId/unlock",
+    '{}',
+    \&ParseCommandResponse,
+    "POST lock/$deviceId/unlock mode=$mode",
+    "mode: $mode"
+  );
+}
+
+sub RequestUnlockDefault {
+  my ($hash, $deviceId) = @_;
+
+  # When Tedee auto-pull is enabled, the native unlock operation lets the
+  # lock firmware handle unlock + spring pull as one coordinated sequence.
+  # This avoids the additional delay observed with an explicit mode 4 unlock.
+  return Request(
+    $hash,
+    'POST',
+    "lock/$deviceId/unlock",
+    '{}',
+    \&ParseCommandResponse,
+    "POST lock/$deviceId/unlock native auto-pull"
+  );
+}
+
+sub StartUnlatch {
+  my ($hash, $deviceId) = @_;
+
+  my $device = $hash->{helper}{devices}{$deviceId} || {};
+  my $state = $device->{state};
+  my $pullSpring = $device->{pullSpringEnabled};
+  my $autoPull = $device->{autoPullSpringEnabled};
+
+  delete $hash->{helper}{unlatchPending}{$deviceId};
+
+  # Pulling the spring requires the feature to be enabled and calibrated in
+  # Tedee. Reject the command early when this is known to be disabled.
+  if (defined($pullSpring) && !$pullSpring) {
+    return 'Pull spring is disabled or not calibrated in Tedee';
+  }
+
+  # An already unlocked lock only needs the pull operation.
+  if (defined($state) && $state == 2) {
+    return RequestUnlockMode($hash, $deviceId, 4);
+  }
+
+  # With Tedee auto-pull enabled, use the native unlock operation without
+  # an explicit mode. This lets the lock firmware perform unlock + spring pull
+  # directly and avoids the delay observed with an explicit mode 4 request.
+  if (defined($state) && ($state == 6 || $state == 3)
+      && defined($autoPull) && $autoPull) {
+    return RequestUnlockDefault($hash, $deviceId);
+  }
+
+  # Without auto-pull (or if its value is not known), first unlock explicitly
+  # without pulling. The follow-up mode 4 is sent only after the bridge has
+  # confirmed state=unlocked. This avoids sleeps and blind double commands.
+  if (defined($state) && ($state == 6 || $state == 3)) {
+    $hash->{helper}{unlatchPending}{$deviceId} = {
+      phase        => 'waiting_unlocked',
+      startedEpoch => time(),
+    };
+    return RequestUnlockMode($hash, $deviceId, 3);
+  }
+
+  # If the cached state is missing or transitional, refresh it first. The
+  # pending operation is evaluated by ProcessPendingUnlatch() afterwards.
+  $hash->{helper}{unlatchPending}{$deviceId} = {
+    phase        => 'need_decision',
+    startedEpoch => time(),
+  };
+
+  return Request($hash, 'GET', 'lock', undef, \&ParseDevices, 'GET lock for unlatch');
+}
+
+sub ProcessPendingUnlatch {
+  my ($hash) = @_;
+
+  my $pendingAll = $hash->{helper}{unlatchPending};
+  return undef if ref($pendingAll) ne 'HASH';
+
+  for my $deviceId (keys %{$pendingAll}) {
+    my $pending = $pendingAll->{$deviceId};
+    next if ref($pending) ne 'HASH';
+
+    # Never keep a command sequence alive indefinitely. A later user command
+    # must not accidentally complete an old unlatch request.
+    if (time() - ($pending->{startedEpoch} // 0) > 15) {
+      delete $pendingAll->{$deviceId};
+      Debug($hash, 3, "unlatch sequence for device $deviceId timed out");
+      next;
+    }
+
+    my $device = $hash->{helper}{devices}{$deviceId} || {};
+    my $state = $device->{state};
+    my $pullSpring = $device->{pullSpringEnabled};
+    my $autoPull = $device->{autoPullSpringEnabled};
+
+    # The setting may only become known after the status refresh that started
+    # the pending operation. Abort safely instead of sending a pull request.
+    if (defined($pullSpring) && !$pullSpring) {
+      delete $pendingAll->{$deviceId};
+      Debug($hash, 3, "unlatch rejected for device $deviceId: pull spring disabled");
+      next;
+    }
+
+    next if !defined($state);
+
+    if (($pending->{phase} // '') eq 'need_decision') {
+      if ($state == 2) {
+        delete $pendingAll->{$deviceId};
+        RequestUnlockMode($hash, $deviceId, 4);
+        next;
+      }
+
+      if ($state == 6 || $state == 3) {
+        if (defined($autoPull) && $autoPull) {
+          delete $pendingAll->{$deviceId};
+          RequestUnlockDefault($hash, $deviceId);
+        } else {
+          $pending->{phase} = 'waiting_unlocked';
+          RequestUnlockMode($hash, $deviceId, 3);
+        }
+        next;
+      }
+
+      # Transitional states are left pending and will be evaluated again on
+      # the next callback/status refresh.
+      next;
+    }
+
+    if (($pending->{phase} // '') eq 'waiting_unlocked') {
+      if ($state == 2) {
+        # Remove the pending marker before sending the final request so no
+        # callback can trigger a duplicate pull operation.
+        delete $pendingAll->{$deviceId};
+        RequestUnlockMode($hash, $deviceId, 4);
+      } elsif ($state == 7 || $state == 8) {
+        # Defensive cleanup: the lock is already pulled/pulling.
+        delete $pendingAll->{$deviceId};
+      }
+    }
+  }
+
+  return undef;
 }
 
 sub Parse {
@@ -437,12 +594,12 @@ sub TokenHeader {
 }
 
 sub Request {
-  my ($hash, $method, $path, $body, $callback, $label) = @_;
+  my ($hash, $method, $path, $body, $callback, $label, $extraHeaders) = @_;
 
   # Tedee Bridge API documentation recommends max. 1 request per second.
   # Queue local bridge requests and execute them one by one.
   my $q = $hash->{helper}{requestQueue} ||= [];
-  push @$q, [$method, $path, $body, $callback, $label];
+  push @$q, [$method, $path, $body, $callback, $label, $extraHeaders];
 
   RunRequestQueue($hash);
   return undef;
@@ -479,7 +636,7 @@ sub FinishRequest {
 }
 
 sub RequestNow {
-  my ($hash, $method, $path, $body, $callback, $label) = @_;
+  my ($hash, $method, $path, $body, $callback, $label, $extraHeaders) = @_;
 
   my $name = $hash->{NAME};
   return 'Device disabled' if ::AttrVal($name, 'disable', 0);
@@ -497,6 +654,8 @@ sub RequestNow {
     $headers .= "\r\nWWW-Authenticate: Token\r\nContent-Type: application/json";
   }
   $headers .= "\r\nContent-Length: " . length($body) if defined($body);
+  $headers .= "\r\n$extraHeaders"
+    if defined($extraHeaders) && $extraHeaders ne '';
 
   Debug($hash, 4, "HTTP $method $url");
   Debug($hash, 5, "HTTP body " . ($body // '')) if defined($body);
@@ -629,6 +788,7 @@ sub ParseDevices {
   my $count = scalar(@$items);
 
   RememberDeviceIds( $hash, $items );
+  ProcessPendingUnlatch($hash);
 
   ::readingsBeginUpdate($hash);
   ::readingsBulkUpdate($hash, 'locksCount', $count);
@@ -768,8 +928,17 @@ sub RememberDeviceIds {
     push @ids, $id;
 
     $hash->{helper}->{devices}->{$id} = {
-      type => $device->{type} // '',
-      name => $device->{name} // '',
+      type  => $device->{type} // '',
+      name  => $device->{name} // '',
+      state => $device->{state},
+      pullSpringEnabled =>
+        ref($device->{deviceSettings}) eq 'HASH'
+          ? $device->{deviceSettings}{pullSpringEnabled}
+          : undef,
+      autoPullSpringEnabled =>
+        ref($device->{deviceSettings}) eq 'HASH'
+          ? $device->{deviceSettings}{autoPullSpringEnabled}
+          : undef,
     };
   }
 

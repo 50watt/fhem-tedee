@@ -80,8 +80,13 @@ sub TedeeDevice_Initialize {
 <ul>
 <li><code>statusRequest</code><br>Reads current status from the local Tedee Bridge API and updates <code>state</code>, <code>lockState</code>, <code>lockStateCode</code>, <code>doorState</code>, <code>doorStateCode</code>, <code>batteryPercent</code>, <code>batteryCharging</code>, <code>batteryState</code>, <code>deviceType</code>, <code>firmwareVersion</code>, <code>name</code>, <code>tedeeId</code>, <code>serialNumber</code>, <code>rssi</code>, <code>isConnected</code>, <code>paired</code>. If a cloud token is configured, it may also update <code>lastAction</code>, <code>lastActionUser</code>, <code>lastActionSource</code>, <code>lastActionDate</code> (local FHEM/Raspberry Pi time using FHEM::Utility::CTZ convertTimeZone with an explicit Tedee timestamp pattern; if CTZ is not available, the original UTC value is kept), <code>lastActionSummary</code>.<br>Example: <code>set tedeeLock1 statusRequest</code></li>
 <li><code>lock</code><br>Locks the device.<br>Example: <code>set tedeeLock1 lock</code></li>
-<li><code>unlock</code><br>Unlocks the device. Requires <code>allowUnlock 1</code>.<br>Example: <code>attr tedeeLock1 allowUnlock 1</code><br><code>set tedeeLock1 unlock</code></li>
-<li><code>unlatch</code><br>Pulls the spring / opens the latch. Requires <code>allowUnlock 1</code>.<br>Example: <code>attr tedeeLock1 allowUnlock 1</code><br><code>set tedeeLock1 unlatch</code></li>
+<li><code>unlock</code><br>Unlocks the lock without pulling the spring, regardless of the Tedee automatic pull-spring setting. Requires <code>allowUnlock 1</code>.<br>Example: <code>attr tedeeLock1 allowUnlock 1</code><br><code>set tedeeLock1 unlock</code></li>
+<li><code>unlatch</code><br>Unlocks the lock if necessary and pulls the spring / opens the latch.<br><br>
+If Tedee automatic pull-spring is enabled, the module uses the native Tedee unlock operation without an explicit mode while the lock is locked or semi-locked. Tedee then performs unlocking and pulling the spring as one coordinated operation without an additional FHEM-side delay.<br><br>
+If Tedee automatic pull-spring is disabled, the module first unlocks without pulling the spring, waits until the <code>unlocked</code> state has been confirmed by a status update or callback, and then requests the spring pull. A short delay between unlocking and pulling the spring is therefore expected.<br><br>
+If the lock is already unlocked, the spring pull is requested directly.<br><br>
+Note: Changes to the automatic pull-spring setting in the Tedee app may not be transferred immediately while the corresponding settings page is still open. Leave or close the settings page so that Tedee saves and transfers the setting. Refresh the lock status afterwards if necessary.<br><br>
+Requires <code>allowUnlock 1</code>.<br>Example: <code>attr tedeeLock1 allowUnlock 1</code><br><code>set tedeeLock1 unlatch</code></li>
 </ul>
 
 <a id="TedeeDevice-get"></a>
@@ -95,6 +100,7 @@ sub TedeeDevice_Initialize {
 <li><code>lockState</code> / <code>lockStateCode</code> - mapped Tedee lock state and original numeric code. Example: <code>2</code> = unlocked, <code>6</code> = locked.</li>
 <li><code>doorState</code> / <code>doorStateCode</code> - mapped Tedee door sensor state and original numeric code. <code>0</code> means no paired door sensor.</li>
 <li><code>batteryPercent</code>, <code>batteryCharging</code>, <code>batteryState</code> - battery level, charging state and derived state.</li>
+<li><code>pullSpringEnabled</code>, <code>autoPullSpringEnabled</code> - Tedee pull-spring configuration used by the command logic.</li>
 <li><code>deviceType</code>, <code>firmwareVersion</code>, <code>name</code>, <code>tedeeId</code>, <code>serialNumber</code>, <code>rssi</code>, <code>isConnected</code>, <code>paired</code> - device identity/connectivity readings.</li>
 <li><code>lastAction</code>, <code>lastActionUser</code>, <code>lastActionSource</code>, <code>lastActionDate</code> (local FHEM/Raspberry Pi time using FHEM::Utility::CTZ convertTimeZone with an explicit Tedee timestamp pattern; if CTZ is not available, the original UTC value is kept), <code>lastActionSummary</code> - optional cloud activity readings.</li>
 </ul>
@@ -133,8 +139,13 @@ sub TedeeDevice_Initialize {
 <ul>
 <li><code>statusRequest</code><br>Liest den aktuellen Status über die lokale Tedee Bridge API und aktualisiert <code>state</code>, <code>lockState</code>, <code>lockStateCode</code>, <code>doorState</code>, <code>doorStateCode</code>, <code>batteryPercent</code>, <code>batteryCharging</code>, <code>batteryState</code>, <code>deviceType</code>, <code>firmwareVersion</code>, <code>name</code>, <code>tedeeId</code>, <code>serialNumber</code>, <code>rssi</code>, <code>isConnected</code> und <code>paired</code>. Wenn ein Cloud-Token konfiguriert ist, können zusätzlich <code>lastAction</code>, <code>lastActionUser</code>, <code>lastActionSource</code>, <code>lastActionDate</code> (lokale FHEM/Raspberry-Pi-Zeit über FHEM::Utility::CTZ convertTimeZone mit explizitem Tedee-Zeitstempel-Pattern; falls CTZ nicht verfügbar ist, bleibt der UTC-Originalwert erhalten) und <code>lastActionSummary</code> aktualisiert werden.<br>Beispiel: <code>set tedeeLock1 statusRequest</code></li>
 <li><code>lock</code><br>Verriegelt das Schloss.<br>Beispiel: <code>set tedeeLock1 lock</code></li>
-<li><code>unlock</code><br>Entriegelt das Schloss. Erfordert <code>allowUnlock 1</code>.<br>Beispiel: <code>attr tedeeLock1 allowUnlock 1</code><br><code>set tedeeLock1 unlock</code></li>
-<li><code>unlatch</code><br>Zieht die Falle / öffnet die Tür. Erfordert <code>allowUnlock 1</code>.<br>Beispiel: <code>attr tedeeLock1 allowUnlock 1</code><br><code>set tedeeLock1 unlatch</code></li>
+<li><code>unlock</code><br>Entriegelt das Schloss ohne die Türfalle zu ziehen, unabhängig von der Tedee-Einstellung für das automatische Einziehen der Türfalle. Erfordert <code>allowUnlock 1</code>.<br>Beispiel: <code>attr tedeeLock1 allowUnlock 1</code><br><code>set tedeeLock1 unlock</code></li>
+<li><code>unlatch</code><br>Entriegelt das Schloss bei Bedarf und zieht anschließend die Türfalle / öffnet die Tür.<br><br>
+Ist das automatische Einziehen der Türfalle in Tedee aktiviert, verwendet das Modul bei einem verriegelten oder teilweise verriegelten Schloss den nativen Tedee-Unlock ohne expliziten Modus. Tedee führt Entriegeln und Einziehen der Türfalle dadurch als zusammenhängende Operation aus, ohne zusätzliche FHEM-seitige Verzögerung.<br><br>
+Ist das automatische Einziehen der Türfalle deaktiviert, entriegelt das Modul zunächst ohne Ziehen der Türfalle, wartet auf die bestätigte Rückmeldung <code>unlocked</code> über Status bzw. Callback und fordert anschließend das Einziehen der Türfalle an. Eine kurze Verzögerung zwischen Entriegeln und Einziehen der Türfalle ist daher normal.<br><br>
+Ist das Schloss bereits entriegelt, wird das Einziehen der Türfalle direkt angefordert.<br><br>
+Hinweis: Änderungen an &quot;Türfalle automatisch einziehen&quot; in der Tedee-App werden möglicherweise noch nicht an Schloss bzw. Bridge übertragen, solange die entsprechende Einstellungsseite geöffnet bleibt. Die Einstellungsseite nach einer Änderung verlassen bzw. schließen, damit Tedee die Einstellung speichert und überträgt. Danach bei Bedarf den Schlossstatus erneut abrufen.<br><br>
+Erfordert <code>allowUnlock 1</code>.<br>Beispiel: <code>attr tedeeLock1 allowUnlock 1</code><br><code>set tedeeLock1 unlatch</code></li>
 </ul>
 
 <a id="TedeeDevice-get"></a>
@@ -148,8 +159,9 @@ sub TedeeDevice_Initialize {
 <li><code>lockState</code> / <code>lockStateCode</code> - gemappter Tedee Schlossstatus und originaler numerischer Code. Beispiel: <code>2</code> = unlocked, <code>6</code> = locked.</li>
 <li><code>doorState</code> / <code>doorStateCode</code> - gemappter Tedee Türsensorstatus und originaler numerischer Code. <code>0</code> bedeutet kein gekoppelter Türsensor.</li>
 <li><code>batteryPercent</code>, <code>batteryCharging</code>, <code>batteryState</code> - Batteriestand, Ladestatus und abgeleiteter Batteriestatus.</li>
+<li><code>pullSpringEnabled</code>, <code>autoPullSpringEnabled</code> - Tedee-Konfiguration der Türfallen-Funktion, die von der Befehlslogik berücksichtigt wird.</li>
 <li><code>deviceType</code>, <code>firmwareVersion</code>, <code>name</code>, <code>tedeeId</code>, <code>serialNumber</code>, <code>rssi</code>, <code>isConnected</code>, <code>paired</code> - Device-Identität und Verbindung.</li>
-<li><code>lastAction</code>, <code>lastActionUser</code>, <code>lastActionSource</code>, <code>lastActionDate</code> (local FHEM/Raspberry Pi time using FHEM::Utility::CTZ convertTimeZone with an explicit Tedee timestamp pattern; if CTZ is not available, the original UTC value is kept), <code>lastActionSummary</code> - optionale Cloud-Activity-Readings.</li>
+<li><code>lastAction</code>, <code>lastActionUser</code>, <code>lastActionSource</code>, <code>lastActionDate</code> (lokale FHEM/Raspberry-Pi-Zeit über <code>FHEM::Utility::CTZ</code>; falls CTZ nicht verfügbar ist, bleibt der ursprüngliche UTC-Wert erhalten), <code>lastActionSummary</code> - optionale Cloud-Activity-Readings.</li>
 </ul>
 
 <a id="TedeeDevice-attributes"></a>
@@ -174,7 +186,7 @@ sub TedeeDevice_Initialize {
 {
   "abstract": "controls a Tedee smart lock device",
   "x_lang": { "de": { "abstract": "steuert ein Tedee Schloss Device" } },
-  "version": "v0.7.29",
+  "version": "v0.7.30",
   "author": [ "50watt" ],
   "license": [ "same as FHEM" ],
   "prereqs": { "runtime": { "requires": { "perl": "5.014", "strict": 0, "warnings": 0, "FHEM::Meta": 0 } } },
