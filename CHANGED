@@ -1,3 +1,12 @@
+2026-09-05 v0.7.31
+- Fix unlatch completion when the final unlocked callback/status update is missing
+- Keep confirmed unlocked callbacks as the immediate fast path
+- Add one bounded five-second fallback after unlocking is observed
+- Avoid polling and preserve the existing local API request queue
+- Cancel pending unlatch sequences on explicit lock/unlock commands
+- Protect delayed fallback timers with per-operation sequence identifiers
+- Keep fallback handling independent for multiple locks
+
 2026-09-02 v0.7.30
 - Make unlock deterministic: always unlock without pulling the spring
 - Make unlatch unlock if necessary and pull the spring

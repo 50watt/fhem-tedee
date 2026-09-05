@@ -37,9 +37,16 @@ BEGIN {
   GP_Import(qw(defs attr data));
 }
 
-our $VERSION = '0.7.30';
+our $VERSION = '0.7.31';
 
 my $API_VERSION  = 'v1.0';
+
+# Maximum time to wait for the normal final "unlocked" state before sending
+# mode 4 once as a fallback. Measurements on a normally reporting Tedee lock
+# showed about 3-4 seconds from "unlocking" to "unlocked". Five seconds keeps
+# the callback/status path preferred while covering bridges that remain at a
+# transitional state even though the mechanical unlock has already completed.
+my $UNLATCH_FALLBACK_DELAY = 5;
 my $WEBHOOK_PATH = 'tedee';
 
 my ($json_encode, $json_decode);
@@ -328,10 +335,18 @@ sub Write {
   }
 
   if ($fn eq 'lock') {
+    # A new explicit command must cancel a pending high-level unlatch sequence.
+    # Otherwise an old delayed fallback could pull the spring after the user
+    # intentionally issued another command.
+    CancelPendingUnlatch($hash, $deviceId, 'lock command');
+
     return Request($hash, 'POST', "lock/$deviceId/lock", '{}', \&ParseCommandResponse, "POST lock/$deviceId/lock");
   }
 
   if ($fn eq 'unlock') {
+    # A new explicit command must cancel a pending high-level unlatch sequence.
+    CancelPendingUnlatch($hash, $deviceId, 'unlock command');
+
     # Mode 3 explicitly suppresses automatic spring pulling. This keeps the
     # FHEM command "unlock" deterministic even when Tedee auto-pull is enabled.
     return RequestUnlockMode($hash, $deviceId, 3);
@@ -377,6 +392,79 @@ sub RequestUnlockDefault {
   );
 }
 
+sub CancelPendingUnlatch {
+  my ($hash, $deviceId, $reason) = @_;
+
+  my $pendingAll = $hash->{helper}{unlatchPending};
+  return undef if ref($pendingAll) ne 'HASH';
+  return undef if !exists($pendingAll->{$deviceId});
+
+  delete $pendingAll->{$deviceId};
+
+  Debug($hash, 4, "unlatch sequence for device $deviceId cancelled: $reason")
+    if defined($reason) && $reason ne '';
+
+  return undef;
+}
+
+sub NextUnlatchSequence {
+  my ($hash) = @_;
+
+  # Identify each logical unlatch operation independently of wall-clock time.
+  # This makes stale timer callbacks harmless after cancellation/replacement.
+  my $sequence = ($hash->{helper}{unlatchSequence} // 0) + 1;
+  $hash->{helper}{unlatchSequence} = $sequence;
+
+  return $sequence;
+}
+
+sub ScheduleUnlatchFallback {
+  my ($hash, $deviceId, $fallbackEpoch, $sequence) = @_;
+
+  return undef
+    if !defined($deviceId)
+    || !defined($fallbackEpoch)
+    || !defined($sequence);
+
+  my $delay = $fallbackEpoch - time();
+  $delay = 0 if $delay < 0;
+
+  # Use a dedicated timer argument per lock. This keeps fallback deadlines
+  # independent when one Tedee Bridge manages more than one lock.
+  my $timerArg = {
+    hash          => $hash,
+    deviceId      => $deviceId,
+    fallbackEpoch => $fallbackEpoch,
+    sequence      => $sequence,
+  };
+
+  ::InternalTimer(
+    gettimeofday() + $delay,
+    __PACKAGE__ . '::UnlatchFallbackTimer',
+    $timerArg
+  );
+
+  return undef;
+}
+
+sub StartUnlatchAfterUnlock {
+  my ($hash, $deviceId) = @_;
+
+  my $sequence = NextUnlatchSequence($hash);
+
+  $hash->{helper}{unlatchPending}{$deviceId} = {
+    phase        => 'waiting_unlocked',
+    startedEpoch => time(),
+    sequence     => $sequence,
+  };
+
+  # Do not start the five-second fallback while mode 3 may still be waiting
+  # in the bridge request queue. ParseDevices() starts the timer when Tedee
+  # first reports state=unlocking. A direct transition to unlocked uses the
+  # callback/status fast path and does not need a fallback timer.
+  return RequestUnlockMode($hash, $deviceId, 3);
+}
+
 sub StartUnlatch {
   my ($hash, $deviceId) = @_;
 
@@ -385,6 +473,7 @@ sub StartUnlatch {
   my $pullSpring = $device->{pullSpringEnabled};
   my $autoPull = $device->{autoPullSpringEnabled};
 
+  # A new unlatch command supersedes any older pending unlatch sequence.
   delete $hash->{helper}{unlatchPending}{$deviceId};
 
   # Pulling the spring requires the feature to be enabled and calibrated in
@@ -400,28 +489,43 @@ sub StartUnlatch {
 
   # With Tedee auto-pull enabled, use the native unlock operation without
   # an explicit mode. This lets the lock firmware perform unlock + spring pull
-  # directly and avoids the delay observed with an explicit mode 4 request.
+  # directly and avoids an unnecessary second FHEM-side request.
   if (defined($state) && ($state == 6 || $state == 3)
       && defined($autoPull) && $autoPull) {
     return RequestUnlockDefault($hash, $deviceId);
   }
 
   # Without auto-pull (or if its value is not known), first unlock explicitly
-  # without pulling. The follow-up mode 4 is sent only after the bridge has
-  # confirmed state=unlocked. This avoids sleeps and blind double commands.
+  # without pulling. A confirmed unlocked callback sends mode 4 immediately.
+  # If the final state is not reported, mode 4 is sent once after five seconds.
   if (defined($state) && ($state == 6 || $state == 3)) {
-    $hash->{helper}{unlatchPending}{$deviceId} = {
-      phase        => 'waiting_unlocked',
-      startedEpoch => time(),
-    };
-    return RequestUnlockMode($hash, $deviceId, 3);
+    return StartUnlatchAfterUnlock($hash, $deviceId);
   }
 
-  # If the cached state is missing or transitional, refresh it first. The
-  # pending operation is evaluated by ProcessPendingUnlatch() afterwards.
+  # If an unlock is already in progress, do not send mode 3 again. Reuse the
+  # same callback/status fast path and bounded fallback.
+  if (defined($state) && $state == 4) {
+    my $now = time();
+    my $fallbackEpoch = $now + $UNLATCH_FALLBACK_DELAY;
+    my $sequence = NextUnlatchSequence($hash);
+
+    $hash->{helper}{unlatchPending}{$deviceId} = {
+      phase         => 'waiting_unlocked',
+      startedEpoch  => $now,
+      fallbackEpoch => $fallbackEpoch,
+      sequence      => $sequence,
+    };
+
+    ScheduleUnlatchFallback($hash, $deviceId, $fallbackEpoch, $sequence);
+    return undef;
+  }
+
+  # If the cached state is missing or otherwise transitional, refresh it first.
+  # ProcessPendingUnlatch() evaluates the result and continues the operation.
   $hash->{helper}{unlatchPending}{$deviceId} = {
     phase        => 'need_decision',
     startedEpoch => time(),
+    sequence     => NextUnlatchSequence($hash),
   };
 
   return Request($hash, 'GET', 'lock', undef, \&ParseDevices, 'GET lock for unlatch');
@@ -437,21 +541,13 @@ sub ProcessPendingUnlatch {
     my $pending = $pendingAll->{$deviceId};
     next if ref($pending) ne 'HASH';
 
-    # Never keep a command sequence alive indefinitely. A later user command
-    # must not accidentally complete an old unlatch request.
-    if (time() - ($pending->{startedEpoch} // 0) > 15) {
-      delete $pendingAll->{$deviceId};
-      Debug($hash, 3, "unlatch sequence for device $deviceId timed out");
-      next;
-    }
-
     my $device = $hash->{helper}{devices}{$deviceId} || {};
     my $state = $device->{state};
     my $pullSpring = $device->{pullSpringEnabled};
     my $autoPull = $device->{autoPullSpringEnabled};
 
-    # The setting may only become known after the status refresh that started
-    # the pending operation. Abort safely instead of sending a pull request.
+    # The setting may only become known after a status refresh. Never continue
+    # with a spring pull when Tedee explicitly reports that it is disabled.
     if (defined($pullSpring) && !$pullSpring) {
       delete $pendingAll->{$deviceId};
       Debug($hash, 3, "unlatch rejected for device $deviceId: pull spring disabled");
@@ -468,33 +564,138 @@ sub ProcessPendingUnlatch {
       }
 
       if ($state == 6 || $state == 3) {
+        delete $pendingAll->{$deviceId};
+
         if (defined($autoPull) && $autoPull) {
-          delete $pendingAll->{$deviceId};
           RequestUnlockDefault($hash, $deviceId);
         } else {
-          $pending->{phase} = 'waiting_unlocked';
-          RequestUnlockMode($hash, $deviceId, 3);
+          StartUnlatchAfterUnlock($hash, $deviceId);
         }
+
         next;
       }
 
-      # Transitional states are left pending and will be evaluated again on
-      # the next callback/status refresh.
+      if ($state == 4) {
+        my $fallbackEpoch = time() + $UNLATCH_FALLBACK_DELAY;
+        my $sequence = $pending->{sequence};
+
+        $pending->{phase}         = 'waiting_unlocked';
+        $pending->{fallbackEpoch} = $fallbackEpoch;
+
+        ScheduleUnlatchFallback($hash, $deviceId, $fallbackEpoch, $sequence);
+        next;
+      }
+
+      # Pulled/pulling means the requested result is already in progress or
+      # complete. Remove the pending operation defensively.
+      if ($state == 7 || $state == 8) {
+        delete $pendingAll->{$deviceId};
+      }
+
       next;
     }
 
     if (($pending->{phase} // '') eq 'waiting_unlocked') {
       if ($state == 2) {
-        # Remove the pending marker before sending the final request so no
-        # callback can trigger a duplicate pull operation.
+        # Remove the marker before the final request so callbacks cannot cause
+        # a duplicate mode 4 operation.
         delete $pendingAll->{$deviceId};
         RequestUnlockMode($hash, $deviceId, 4);
-      } elsif ($state == 7 || $state == 8) {
-        # Defensive cleanup: the lock is already pulled/pulling.
-        delete $pendingAll->{$deviceId};
+        next;
       }
+
+      if ($state == 7 || $state == 8) {
+        delete $pendingAll->{$deviceId};
+        next;
+      }
+
+      # Start the bounded fallback only after Tedee has actually entered the
+      # unlocking state. Do this once; repeated callbacks must not move the
+      # deadline further into the future.
+      if ($state == 4 && !defined($pending->{fallbackEpoch})) {
+        my $fallbackEpoch = time() + $UNLATCH_FALLBACK_DELAY;
+        my $sequence = $pending->{sequence};
+
+        $pending->{fallbackEpoch} = $fallbackEpoch;
+        ScheduleUnlatchFallback($hash, $deviceId, $fallbackEpoch, $sequence);
+      }
+
+      # Other transitional states remain pending until another callback/status
+      # update arrives. No polling requests are generated.
     }
   }
+
+  return undef;
+}
+
+sub UnlatchFallbackTimer {
+  my ($timerArg) = @_;
+
+  return undef if ref($timerArg) ne 'HASH';
+
+  my $hash = $timerArg->{hash};
+  my $deviceId = $timerArg->{deviceId};
+  my $scheduledEpoch = $timerArg->{fallbackEpoch};
+  my $scheduledSequence = $timerArg->{sequence};
+
+  return undef if ref($hash) ne 'HASH';
+  return undef
+    if !defined($deviceId)
+    || !defined($scheduledEpoch)
+    || !defined($scheduledSequence);
+
+  my $pendingAll = $hash->{helper}{unlatchPending};
+  return undef if ref($pendingAll) ne 'HASH';
+
+  my $pending = $pendingAll->{$deviceId};
+  return undef if ref($pending) ne 'HASH';
+  return undef if ($pending->{phase} // '') ne 'waiting_unlocked';
+
+  my $currentEpoch = $pending->{fallbackEpoch};
+  my $currentSequence = $pending->{sequence};
+
+  # Ignore stale timers left behind by a cancelled/replaced unlatch sequence.
+  # The sequence is authoritative; fallbackEpoch additionally guards against
+  # an accidentally rescheduled timer within the same logical operation.
+  return undef if !defined($currentEpoch) || !defined($currentSequence);
+  return undef if $currentSequence != $scheduledSequence;
+  return undef if $currentEpoch != $scheduledEpoch;
+
+  my $device = $hash->{helper}{devices}{$deviceId} || {};
+  my $state = $device->{state};
+  my $pullSpring = $device->{pullSpringEnabled};
+
+  # Never execute a delayed spring pull if Tedee explicitly reports that
+  # spring pulling is disabled.
+  if (defined($pullSpring) && !$pullSpring) {
+    delete $pendingAll->{$deviceId};
+    Debug(
+      $hash,
+      3,
+      "unlatch fallback for device $deviceId cancelled: pull spring disabled"
+    );
+    return undef;
+  }
+
+  # If Tedee already reports pulled/pulling, there is nothing left to do.
+  if (defined($state) && ($state == 7 || $state == 8)) {
+    delete $pendingAll->{$deviceId};
+    return undef;
+  }
+
+  # Delete before sending to guarantee that the fallback runs at most once.
+  # This intentionally sends mode 4 even when the cached state still says
+  # "unlocking": the final state callback may be missing although the lock
+  # has mechanically completed its unlock operation.
+  delete $pendingAll->{$deviceId};
+
+  Debug(
+    $hash,
+    4,
+    "unlatch fallback for device $deviceId after $UNLATCH_FALLBACK_DELAY seconds"
+  );
+
+  RequestUnlockMode($hash, $deviceId, 4);
 
   return undef;
 }

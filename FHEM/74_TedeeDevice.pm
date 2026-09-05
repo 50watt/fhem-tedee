@@ -83,7 +83,7 @@ sub TedeeDevice_Initialize {
 <li><code>unlock</code><br>Unlocks the lock without pulling the spring, regardless of the Tedee automatic pull-spring setting. Requires <code>allowUnlock 1</code>.<br>Example: <code>attr tedeeLock1 allowUnlock 1</code><br><code>set tedeeLock1 unlock</code></li>
 <li><code>unlatch</code><br>Unlocks the lock if necessary and pulls the spring / opens the latch.<br><br>
 If Tedee automatic pull-spring is enabled, the module uses the native Tedee unlock operation without an explicit mode while the lock is locked or semi-locked. Tedee then performs unlocking and pulling the spring as one coordinated operation without an additional FHEM-side delay.<br><br>
-If Tedee automatic pull-spring is disabled, the module first unlocks without pulling the spring, waits until the <code>unlocked</code> state has been confirmed by a status update or callback, and then requests the spring pull. A short delay between unlocking and pulling the spring is therefore expected.<br><br>
+If Tedee automatic pull-spring is disabled, the module first unlocks without pulling the spring. A confirmed <code>unlocked</code> status update or callback triggers the spring pull immediately. If the bridge does not report the final <code>unlocked</code> state, the module sends the spring-pull request once after five seconds as a bounded fallback. A short delay between unlocking and pulling the spring is therefore expected.<br><br>
 If the lock is already unlocked, the spring pull is requested directly.<br><br>
 Note: Changes to the automatic pull-spring setting in the Tedee app may not be transferred immediately while the corresponding settings page is still open. Leave or close the settings page so that Tedee saves and transfers the setting. Refresh the lock status afterwards if necessary.<br><br>
 Requires <code>allowUnlock 1</code>.<br>Example: <code>attr tedeeLock1 allowUnlock 1</code><br><code>set tedeeLock1 unlatch</code></li>
@@ -142,7 +142,7 @@ Requires <code>allowUnlock 1</code>.<br>Example: <code>attr tedeeLock1 allowUnlo
 <li><code>unlock</code><br>Entriegelt das Schloss ohne die Türfalle zu ziehen, unabhängig von der Tedee-Einstellung für das automatische Einziehen der Türfalle. Erfordert <code>allowUnlock 1</code>.<br>Beispiel: <code>attr tedeeLock1 allowUnlock 1</code><br><code>set tedeeLock1 unlock</code></li>
 <li><code>unlatch</code><br>Entriegelt das Schloss bei Bedarf und zieht anschließend die Türfalle / öffnet die Tür.<br><br>
 Ist das automatische Einziehen der Türfalle in Tedee aktiviert, verwendet das Modul bei einem verriegelten oder teilweise verriegelten Schloss den nativen Tedee-Unlock ohne expliziten Modus. Tedee führt Entriegeln und Einziehen der Türfalle dadurch als zusammenhängende Operation aus, ohne zusätzliche FHEM-seitige Verzögerung.<br><br>
-Ist das automatische Einziehen der Türfalle deaktiviert, entriegelt das Modul zunächst ohne Ziehen der Türfalle, wartet auf die bestätigte Rückmeldung <code>unlocked</code> über Status bzw. Callback und fordert anschließend das Einziehen der Türfalle an. Eine kurze Verzögerung zwischen Entriegeln und Einziehen der Türfalle ist daher normal.<br><br>
+Ist das automatische Einziehen der Türfalle deaktiviert, entriegelt das Modul zunächst ohne Ziehen der Türfalle. Eine bestätigte Rückmeldung <code>unlocked</code> über Status bzw. Callback löst das Einziehen der Türfalle sofort aus. Meldet die Bridge den finalen Status <code>unlocked</code> nicht, fordert das Modul das Einziehen der Türfalle nach fünf Sekunden einmalig als begrenzten Fallback an. Eine kurze Verzögerung zwischen Entriegeln und Einziehen der Türfalle ist daher normal.<br><br>
 Ist das Schloss bereits entriegelt, wird das Einziehen der Türfalle direkt angefordert.<br><br>
 Hinweis: Änderungen an &quot;Türfalle automatisch einziehen&quot; in der Tedee-App werden möglicherweise noch nicht an Schloss bzw. Bridge übertragen, solange die entsprechende Einstellungsseite geöffnet bleibt. Die Einstellungsseite nach einer Änderung verlassen bzw. schließen, damit Tedee die Einstellung speichert und überträgt. Danach bei Bedarf den Schlossstatus erneut abrufen.<br><br>
 Erfordert <code>allowUnlock 1</code>.<br>Beispiel: <code>attr tedeeLock1 allowUnlock 1</code><br><code>set tedeeLock1 unlatch</code></li>
@@ -186,7 +186,7 @@ Erfordert <code>allowUnlock 1</code>.<br>Beispiel: <code>attr tedeeLock1 allowUn
 {
   "abstract": "controls a Tedee smart lock device",
   "x_lang": { "de": { "abstract": "steuert ein Tedee Schloss Device" } },
-  "version": "v0.7.30",
+  "version": "v0.7.31",
   "author": [ "50watt" ],
   "license": [ "same as FHEM" ],
   "prereqs": { "runtime": { "requires": { "perl": "5.014", "strict": 0, "warnings": 0, "FHEM::Meta": 0 } } },

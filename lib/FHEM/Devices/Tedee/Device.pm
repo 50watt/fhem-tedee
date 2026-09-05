@@ -85,7 +85,7 @@ eval {
     };
 };
 
-our $VERSION = '0.7.30';
+our $VERSION = '0.7.31';
 
 ######## Begin Device
 

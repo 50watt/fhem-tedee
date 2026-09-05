@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.7.31 - 2026-09-05
+
+### Fixed
+
+- Make `unlatch` reliable when Tedee auto-pull is disabled and the lock remains in the transitional `unlocking` state.
+- Keep the callback/status-driven fast path: a confirmed `unlocked` state still triggers the spring pull immediately.
+- Add a bounded five-second fallback starting only after `unlocking` is observed; the spring pull is then requested exactly once if the final `unlocked` update is missing.
+- Avoid polling and keep all local API requests serialized through the existing Tedee Bridge request queue.
+- Cancel pending unlatch sequences on explicit `lock` or `unlock` commands.
+- Add per-unlatch sequence identifiers so stale fallback timers cannot affect a newer unlatch operation.
+- Keep fallback timers independent for multiple locks connected to the same Tedee Bridge.
+
 ## v0.7.30 - 2026-09-02
 
 ### Changed
